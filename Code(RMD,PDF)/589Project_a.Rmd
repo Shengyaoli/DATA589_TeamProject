@@ -1,0 +1,175 @@
+---
+title: "589_Project"
+author: "Shengyao Li"
+date: "2024-04-27"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+```
+
+```{r}
+install.packages("data.table")
+
+library(data.table)
+dataset <- fread("589_RawData.csv")
+
+library(dplyr)
+selected_data <- dataset %>% select(gbifID, decimalLatitude, decimalLongitude, eventDate, verbatimScientificName)
+
+```
+
+```{r}
+write.csv(selected_data, file = "selected_data.csv", row.names = FALSE)
+
+summary(selected_data)
+
+```
+
+```{r}
+library(sp)
+library(sf)
+observations <- read.csv("selected_data.csv")
+observations <- na.omit(observations)
+
+sum(is.na(observations$decimalLongitude)) 
+sum(is.na(observations$decimalLatitude)) 
+
+```
+
+
+```{r}
+if(sum(is.na(observations$decimalLongitude)) == 0 & sum(is.na(observations$decimalLatitude)) == 0) {
+  coordinates(observations) <- ~decimalLongitude + decimalLatitude
+  proj4string(observations) <- CRS("+proj=longlat +datum=WGS84 +no_defs")
+} else {
+  stop("There are still missing values in the coordinates.")
+}
+
+load("BC_Parks.Rda")
+
+library(ggplot2)
+
+ggplot() + geom_sf(data = DATA$Window)
+observations_sf <- st_as_sf(observations, coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+observations_sf <- st_transform(observations_sf, crs = st_crs(DATA$Window))
+
+ggplot() +
+  geom_sf(data = DATA$Window) + 
+  geom_point(data = as.data.frame(st_coordinates(observations_sf)), aes(x = X, y = Y), color = "blue") +
+  labs(title = "BC Coastal Waterbird Observation") +
+  theme_minimal()
+
+```
+
+```{r}
+library(spatstat)
+window_data <- as.owin(DATA$Window)
+
+
+coords <- st_coordinates(observations_sf)
+observations_ppp <- ppp(x = coords[,1], y = coords[,2], window = window_data)
+Qua <- quadratcount(observations_ppp,
+                    nx = 10,
+                    ny = 10)
+quad_test <- quadrat.test(Qua)
+quad_test
+plot(Qua, main="Quadrat Count of Bird Observations")
+points(observations_ppp)
+
+```
+
+```{r}
+plot(intensity(Qua, image = T),
+     main = "Quadrat Intensity")
+
+plot(observations_ppp,
+     pch = 16,
+     cex = 0.6,
+     cols = "red",
+     add = T)
+
+plot(observations_ppp,
+     pch = 16,
+     cex = 0.5,
+     cols = "blue",
+     add = T)
+
+```
+
+```{r}
+lambda_u_hat_value <- density(observations_ppp)
+plot(lambda_u_hat_value, main = "Density Estimation via Kernel Method")
+plot(observations_ppp,
+     pch = 16,
+     cex = 0.6,
+     col = "yellow",
+     add = TRUE)
+
+plot(observations_ppp,
+     pch = 16,
+     cex = 0.5,
+     col = "blue",
+     add = TRUE)
+
+
+```
+
+```{r}
+observations_ppp$n
+sum(is.na(observations_ppp$x), is.na(observations_ppp$y), is.infinite(observations_ppp$x), is.infinite(observations_ppp$y))
+sigma_val <- bw.scott(observations_ppp)
+kde <- density(observations_ppp, sigma = sigma_val)
+plot(kde)
+
+```
+
+```{r}
+observations <- read.csv("selected_data.csv")
+observations <- na.omit(observations)
+
+
+sum(is.na(observations$decimalLongitude)) 
+sum(is.na(observations$decimalLatitude)) 
+
+observations_sf <- st_as_sf(observations, coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+install.packages("dplyr")
+library(dplyr)
+coords <- st_coordinates(observations_sf)
+coords_df <- as.data.frame(coords)
+bird_counts <- coords_df %>%
+  group_by(X, Y) %>%
+  summarise(birdCount = n())
+
+bird_counts_sf <- st_as_sf(bird_counts, coords = c("X", "Y"), crs = 4326)
+library(ggplot2)
+library(sf)
+
+
+ggplot(data = bird_counts_sf) +
+  geom_sf(aes(size = birdCount, color = birdCount), alpha = 0.6) +
+  scale_color_viridis_c() +
+  labs(title = "Bird Counts Distribution",
+       color = "Count",
+       size = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+install.packages("spdep") 
+library(sf) 
+library(spdep) 
+
+k <- 5 
+
+neighbors <- knn2nb(knearneigh(st_coordinates(bird_counts_sf), k=k), sym=TRUE ) 
+weights <- nb2listw(neighbors, style="W") 
+moran <- moran.test(bird_counts_sf$birdCount, listw = weights)
+
+print(moran)
+
+```
+

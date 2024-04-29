@@ -1,0 +1,106 @@
+---
+title: "589Project_b"
+author: "Shengyao Li"
+date: "2024-04-29"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+```
+
+```{r}
+install.packages("data.table")
+
+library(data.table)
+dataset <- fread("589_RawData.csv")
+
+library(dplyr)
+locality_selected_data <- dataset %>% select(gbifID, decimalLatitude, locality, decimalLongitude, eventDate, verbatimScientificName)
+
+write.csv(locality_selected_data, file = "locality_selected_data.csv", row.names = FALSE)
+
+```
+
+```{r}
+library(dplyr)
+
+locality_counts <- locality_selected_data %>%
+  group_by(locality) %>%
+  summarise(count = n())
+
+print(locality_counts)
+
+write.csv(locality_counts, file = "locality_counts.csv", row.names = FALSE)
+
+```
+
+```{r}
+count_by_coordinates <- locality_selected_data %>%
+  group_by(decimalLatitude, decimalLongitude) %>%
+  summarise(count = n(), .groups = 'drop')
+
+print(count_by_coordinates)
+
+write.csv(count_by_coordinates, file = "count_by_coordinates.csv", row.names = FALSE)
+
+```
+
+
+## Variogram
+```{r}
+install.packages(c("gstat", "sp"))
+library(gstat)
+library(sp)
+
+
+count_by_coordinates <- na.omit(count_by_coordinates)
+
+coordinates <- count_by_coordinates[, c("decimalLatitude", "decimalLongitude")]
+counts <- count_by_coordinates$count
+
+coordinates_df <- as.data.frame(coordinates)
+
+coordinates_sp <- SpatialPoints(coordinates_df)
+
+spdf <- SpatialPointsDataFrame(coordinates_sp, data=data.frame(count=counts))
+
+v <- variogram(count~1, spdf)
+
+fit <- fit.variogram(v, model=vgm(psill=1, "Sph", range=1, nugget=0.5))
+
+plot(v, fit)
+
+```
+
+```{r}
+print(fit)
+
+```
+
+## Kriging
+```{r}
+grid_size <- 0.01 
+
+grd <- expand.grid(
+  decimalLatitude = seq(from = min(count_by_coordinates$decimalLatitude), to = max(count_by_coordinates$decimalLatitude), by = grid_size),
+  decimalLongitude = seq(from = min(count_by_coordinates$decimalLongitude), to = max(count_by_coordinates$decimalLongitude), by = grid_size)
+)
+
+if (!nrow(grd) > 0) {
+  stop("The grid has no rows. Check the sequence generation for latitude and longitude.")
+}
+
+coordinates(grd) <- ~decimalLatitude+decimalLongitude
+gridded(grd) <- TRUE
+
+grd_sp <- SpatialPixelsDataFrame(grd, data=data.frame(count=rep(NA, length(grd))))
+
+krige_out <- krige(formula = count~1, locations = spdf, newdata = grd_sp, model = fit)
+
+spplot(krige_out, "var1.pred", 
+       scales = list(draw = TRUE))
+
+```
+
